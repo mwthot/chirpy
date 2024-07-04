@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 type apiConfig struct {
 	fileserverHits int
+	responseType   string
 }
 
 func main() {
@@ -20,9 +22,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/app/*", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))))
-	mux.HandleFunc("/healthz", handlerReadiness)
-	mux.HandleFunc("/metrics", apiCfg.handlerMetrics)
-	mux.HandleFunc("/reset", apiCfg.handlerReset)
+	mux.HandleFunc("GET /api/healthz", handlerReadiness)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
+	mux.HandleFunc("/api/reset", apiCfg.handlerReset)
+	mux.HandleFunc("POST /api/validate_chirp", apiCfg.jsonValidator)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -41,7 +44,39 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Content-Type", "text/plain; charset = utf-8")
+	w.Header().Add("Content-Type", "text/html; charset = utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf("Hits: %d", cfg.fileserverHits)))
+	htmlTemplate := `
+		<html> 
+		<body> 
+			<h1>Welcome, Chirpy Admin</h1>
+			<p>Chirpy has been visited %d times!</p>
+		</body> 
+		</html>
+	`
+	w.Write([]byte(fmt.Sprintf(htmlTemplate, cfg.fileserverHits)))
+}
+
+func (cfg *apiConfig) jsonValidator(w http.ResponseWriter, r *http.Request) {
+	type request struct {
+		Body string `json:"body"`
+	}
+
+	var reqData request
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&reqData)
+	if err != nil {
+		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(reqData.Body) > 140 {
+		http.Error(w, `{"error": Chirp is too long}`, http.StatusBadRequest)
+	}
+
+	response := map[string]bool{"valid": true}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+
 }
