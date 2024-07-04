@@ -26,7 +26,7 @@ func main() {
 
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
 	mux.HandleFunc("GET /api/reset", apiCfg.handlerReset)
-	mux.HandleFunc("POST /api/validate_chirp", apiCfg.requestValidator)
+	mux.HandleFunc("POST /api/validate_chirp", apiCfg.handlerChirpsValidate)
 
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
 
@@ -60,12 +60,12 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf(htmlTemplate, cfg.fileserverHits)))
 }
 
-func (cfg *apiConfig) requestValidator(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handlerChirpsValidate(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
 	}
 	type returnVals struct {
-		CleanedBody string `json:"cleaned_body`
+		CleanedBody string `json:"cleaned_body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
