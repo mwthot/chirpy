@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type apiConfig struct {
 	fileserverHits int
-	responseType   string
 }
 
 func main() {
@@ -25,7 +25,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
 	mux.HandleFunc("/api/reset", apiCfg.handlerReset)
-	mux.HandleFunc("POST /api/validate_chirp", apiCfg.jsonValidator)
+	mux.HandleFunc("POST /api/validate_chirp", apiCfg.requestValidator)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -57,9 +57,12 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf(htmlTemplate, cfg.fileserverHits)))
 }
 
-func (cfg *apiConfig) jsonValidator(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) requestValidator(w http.ResponseWriter, r *http.Request) {
 	type request struct {
 		Body string `json:"body"`
+	}
+	type response struct {
+		CleanedBody string `json:"cleaned_body`
 	}
 
 	var reqData request
@@ -74,9 +77,34 @@ func (cfg *apiConfig) jsonValidator(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": Chirp is too long}`, http.StatusBadRequest)
 	}
 
-	response := map[string]bool{"valid": true}
+	cleanedBody := cfg.profanityDetector(reqData.Body)
+
+	respData := response{
+		CleanedBody: cleanedBody,
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(respData); err != nil {
+		http.Error(w, `{"error": "Unable to encode response}`, http.StatusInternalServerError)
+	}
 
+}
+
+func (cfg *apiConfig) profanityDetector(text string) string {
+	profanity := []string{"kerfuffle", "sharbert", "fornax"}
+	words := strings.Split(text, " ")
+
+	for i, word := range words {
+		lowerWord := strings.ToLower(word)
+		for _, badWord := range profanity {
+			if lowerWord == badWord {
+				words[i] = "****"
+				break
+			}
+		}
+	}
+
+	cleanedText := strings.Join(words, " ")
+	return cleanedText
 }
