@@ -21,11 +21,14 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/app/*", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))))
+	fsHandler := apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
+	mux.Handle("/app/*", fsHandler)
+
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
-	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
-	mux.HandleFunc("/api/reset", apiCfg.handlerReset)
+	mux.HandleFunc("GET /api/reset", apiCfg.handlerReset)
 	mux.HandleFunc("POST /api/validate_chirp", apiCfg.requestValidator)
+
+	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -58,53 +61,71 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) requestValidator(w http.ResponseWriter, r *http.Request) {
-	type request struct {
+	type parameters struct {
 		Body string `json:"body"`
 	}
-	type response struct {
+	type returnVals struct {
 		CleanedBody string `json:"cleaned_body`
 	}
 
-	var reqData request
 	decoder := json.NewDecoder(r.Body)
-	err := decoder.Decode(&reqData)
+	params := parameters{}
+	err := decoder.Decode(&params)
 	if err != nil {
-		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
 		return
 	}
 
-	if len(reqData.Body) > 140 {
-		http.Error(w, `{"error": Chirp is too long}`, http.StatusBadRequest)
+	const maxChirpLength = 140
+	if len(params.Body) > maxChirpLength {
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
+		return
 	}
 
-	cleanedBody := cfg.profanityDetector(reqData.Body)
-
-	respData := response{
-		CleanedBody: cleanedBody,
+	badWords := map[string]struct{}{
+		"kerfuffle": {},
+		"sharbert":  {},
+		"fornax":    {},
 	}
+	cleaned := getCleanedBody(params.Body, badWords)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(respData); err != nil {
-		http.Error(w, `{"error": "Unable to encode response}`, http.StatusInternalServerError)
-	}
-
+	respondWithJSON(w, http.StatusOK, returnVals{
+		CleanedBody: cleaned,
+	})
 }
 
-func (cfg *apiConfig) profanityDetector(text string) string {
-	profanity := []string{"kerfuffle", "sharbert", "fornax"}
-	words := strings.Split(text, " ")
-
+func getCleanedBody(body string, badWords map[string]struct{}) string {
+	words := strings.Split(body, " ")
 	for i, word := range words {
-		lowerWord := strings.ToLower(word)
-		for _, badWord := range profanity {
-			if lowerWord == badWord {
-				words[i] = "****"
-				break
-			}
+		loweredWord := strings.ToLower(word)
+		if _, ok := badWords[loweredWord]; ok {
+			words[i] = "****"
 		}
 	}
+	cleaned := strings.Join(words, " ")
+	return cleaned
+}
 
-	cleanedText := strings.Join(words, " ")
-	return cleanedText
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	if code > 499 {
+		log.Printf("Responding with 5XX error: %s", msg)
+	}
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+	respondWithJSON(w, code, errorResponse{
+		Error: msg,
+	})
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+	w.WriteHeader(code)
+	w.Write(dat)
 }
